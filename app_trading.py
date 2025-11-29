@@ -6,55 +6,62 @@ import time
 from datetime import datetime, timezone
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="Crypto Bot Direct", page_icon="⚡")
+st.set_page_config(page_title="Crypto Bot Pro", page_icon="⚡")
 
-st.title("⚡ Crypto Scanner (Direct API)")
-st.write("Connessione diretta ai server pubblici di Binance")
+st.title("⚡ Crypto Scanner (Dati Coinbase)")
+st.write("Dati in tempo reale tramite API pubbliche Coinbase")
 
 # --- PARAMETRI STRATEGIE ---
-# Usiamo i simboli "raw" di Binance (senza slash)
+# Simboli Coinbase: "SOL-USD", "ETH-USD", "XRP-USD"
 strategies = {
-    "SOLUSDT": {"name": "SOL/USDT", "sma": 100, "target_hour": 17, "sl": "2%"},
-    "ETHUSDT": {"name": "ETH/USDT", "sma": 50,  "target_hour": 17, "sl": "2%"},
-    "XRPUSDT": {"name": "XRP/USDT", "sma": 100, "target_hour": 17, "sl": "2%"}
+    "SOL-USD": {"sma": 100, "target_hour": 17, "sl": "2%"},
+    "ETH-USD": {"sma": 50,  "target_hour": 17, "sl": "2%"},
+    "XRP-USD": {"sma": 100, "target_hour": 17, "sl": "2%"}
 }
 
-# --- FUNZIONE DIRETTA (Senza librerie esterne) ---
-def get_binance_data_direct(symbol, interval='1h', limit=200):
-    url = "https://api.binance.com/api/v3/klines"
-    params = {"symbol": symbol, "interval": interval, "limit": limit}
+# --- FUNZIONE DIRETTA COINBASE ---
+def get_coinbase_data(symbol, granularity=3600):
+    # Granularity 3600 = 1 ora (in secondi)
+    url = f"https://api.exchange.coinbase.com/products/{symbol}/candles"
+    params = {"granularity": granularity}
     
     try:
-        # Chiamata HTTP diretta (come aprire una pagina web)
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
+        # Headers necessari per simulare un browser ed evitare blocchi
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json"
+        }
+        
+        response = requests.get(url, params=params, headers=headers, timeout=10)
+        
+        # Se c'è un errore, ferma tutto e mostralo
+        if response.status_code != 200:
+            st.error(f"Errore API Coinbase ({response.status_code}): {response.text}")
+            return None
+            
         data = response.json()
         
-        # Binance restituisce una lista di liste. La convertiamo in DataFrame.
-        # Colonne: Open time, Open, High, Low, Close, Volume, ...
-        df = pd.DataFrame(data, columns=[
-            'timestamp', 'Open', 'High', 'Low', 'Close', 'Volume', 
-            'CloseTime', 'QuoteAssetVolume', 'Trades', 'TakerBuyBase', 'TakerBuyQuote', 'Ignore'
-        ])
+        # Coinbase restituisce: [time, low, high, open, close, volume]
+        # Attenzione all'ordine! Documentazione ufficiale: [time, low, high, open, close, volume]
+        df = pd.DataFrame(data, columns=['timestamp', 'Low', 'High', 'Open', 'Close', 'Volume'])
         
-        # Pulizia e formattazione
-        df['Date'] = pd.to_datetime(df['timestamp'], unit='ms')
+        # Convertiamo timestamp
+        df['Date'] = pd.to_datetime(df['timestamp'], unit='s')
         df.set_index('Date', inplace=True)
         
-        # Convertiamo le stringhe in numeri (Binance manda stringhe per precisione)
-        cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-        df[cols] = df[cols].apply(pd.to_numeric)
+        # Ordiniamo dal più vecchio al più recente (Coinbase li dà al contrario)
+        df = df.sort_index()
         
-        return df[cols]
+        return df
         
     except Exception as e:
-        st.error(f"Errore connessione per {symbol}: {e}")
+        st.error(f"Eccezione connessione {symbol}: {e}")
         return None
 
 # --- INTERFACCIA ---
-st.sidebar.header("Controllo")
-auto_refresh = st.sidebar.toggle("🔴 Aggiornamento Automatico (30s)", value=False)
-manual_refresh = st.sidebar.button("🔄 Aggiorna Adesso")
+st.sidebar.header("Pannello di Controllo")
+auto_refresh = st.sidebar.toggle("🔴 Live Mode (30s)", value=False)
+manual_refresh = st.sidebar.button("🔄 Aggiorna Dati")
 
 placeholder = st.empty()
 
@@ -63,7 +70,7 @@ def scansione_mercato():
         now_utc = datetime.now(timezone.utc)
         current_hour = now_utc.hour
         
-        st.info(f"🕒 Orario UTC: {now_utc.strftime('%H:%M:%S')} (Candela delle {current_hour}:00)")
+        st.info(f"🕒 Orario UTC: {now_utc.strftime('%H:%M:%S')} (Candela H{current_hour})")
         
         cols = st.columns(3)
         
@@ -71,9 +78,9 @@ def scansione_mercato():
             col = cols[i]
             
             # Scarico Dati
-            data = get_binance_data_direct(symbol)
+            data = get_coinbase_data(symbol)
             
-            if data is not None:
+            if data is not None and not data.empty:
                 # Calcoli
                 sma_val = params['sma']
                 data['SMA'] = data['Close'].rolling(window=sma_val).mean()
@@ -92,7 +99,9 @@ def scansione_mercato():
                 
                 # Visualizzazione
                 with col:
-                    st.subheader(params['name'])
+                    clean_name = symbol.replace("-USD", "")
+                    st.subheader(f"{clean_name}")
+                    
                     st.metric(
                         label="Prezzo",
                         value=f"${last_price:.4f}",
@@ -110,6 +119,8 @@ def scansione_mercato():
                         hours_left = params['target_hour'] - current_hour
                         if hours_left < 0: hours_left += 24
                         st.info(f"⏳ **ATTENDI** (-{hours_left}h)")
+            else:
+                col.warning(f"Dati non disponibili per {symbol}")
 
 # --- LOOP ---
 if auto_refresh:
@@ -120,4 +131,4 @@ else:
     scansione_mercato()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Dati diretti da Binance Public API.")
+st.sidebar.caption("Dati Real-Time forniti da Coinbase Public API.")
