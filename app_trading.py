@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 st.set_page_config(page_title="Crypto Bot 3000", page_icon="🚀")
 
 st.title("🚀 Black Chpok ")
-st.write("KobyGenBot_v1")
+st.write("KobyGenBot_v1.0")
 
 # --- PARAMETRI STRATEGIE ---
 strategies = {
@@ -18,7 +18,7 @@ strategies = {
 }
 
 # --- PULSANTE DI SCANSIONE ---
-if st.button("📡 SCANSIONA MERCATO ADESSO"):
+if st.button("📡 SCAN Market(Scanyvannia)"):
     
     current_hour = datetime.now(timezone.utc).hour
     st.info(f"🕒 Orario attuale (UTC): {datetime.now(timezone.utc).strftime('%H:%M')}")
@@ -60,9 +60,9 @@ if st.button("📡 SCANSIONA MERCATO ADESSO"):
             
             if hour_ok:
                 if trend_ok:
-                    st.success(f"🚀 BUY NOW! (Stop Loss: -{params['sl']})")
+                    st.success(f"🚀 BUY NOW!(Zaxod v Long) (Stop Loss: -{params['sl']})")
                 else:
-                    st.warning("⛔ FLAT (Ora giusta, Trend sbagliato)")
+                    st.warning("⛔ FLAT (SraKa)")
             else:
                 hours_left = params['target_hour'] - current_hour
                 if hours_left < 0: hours_left += 24
