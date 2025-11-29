@@ -1,77 +1,118 @@
 import streamlit as st
-import yfinance as yf
+import ccxt
 import pandas as pd
 import numpy as np
+import time
 from datetime import datetime, timezone
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="Crypto Bot 3000", page_icon="🚀")
+st.set_page_config(page_title="KobyGenBot Real-Time", page_icon="⚡")
 
-st.title("🚀 Black Chpok ")
-st.write("KobyGenBot_v1.0")
+st.title("⚡ Crypto Scanner (Dati Binance)")
+st.write("exchange n.1 al mondo")
 
 # --- PARAMETRI STRATEGIE ---
+# Nota: Su Binance i simboli sono "COIN/USDT"
 strategies = {
-    "SOL-USD": {"sma": 100, "target_hour": 17, "sl": "2%"},
-    "ETH-USD": {"sma": 50,  "target_hour": 17, "sl": "2%"},
-    "XRP-USD": {"sma": 100, "target_hour": 17, "sl": "2%"}
+    "SOL/USDT": {"sma": 100, "target_hour": 17, "sl": "2%"},
+    "ETH/USDT": {"sma": 50,  "target_hour": 17, "sl": "2%"},
+    "XRP/USDT": {"sma": 100, "target_hour": 17, "sl": "2%"}
 }
 
-# --- PULSANTE DI SCANSIONE ---
-if st.button("📡 SCAN Market(Scanyvannia)"):
-    
-    current_hour = datetime.now(timezone.utc).hour
-    st.info(f"🕒 Orario attuale (UTC): {datetime.now(timezone.utc).strftime('%H:%M')}")
-    
-    # Barra di progresso
-    progress_bar = st.progress(0)
-    step = 0
-    
-    for ticker, params in strategies.items():
-        step += 1
-        progress_bar.progress(int(step / len(strategies) * 100))
+# --- FUNZIONE PER SCARICARE DA BINANCE ---
+# Questa funzione si collega a Binance e scarica le ultime candele
+def get_binance_data(symbol, timeframe='1h', limit=200):
+    try:
+        exchange = ccxt.binance()
+        # Scarica le candele (Open, High, Low, Close, Volume)
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
         
-        # 1. Scarico Dati
-        try:
-            data = yf.download(ticker, period="1mo", interval="1h", progress=False)
-            if isinstance(data.columns, pd.MultiIndex):
-                data = data.stack(level=1).rename_axis(['Date', 'Ticker']).reset_index(level=1)
+        # Trasforma i dati grezzi in una Tabella leggibile (DataFrame)
+        data = pd.DataFrame(ohlcv, columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
+        data['Date'] = pd.to_datetime(data['timestamp'], unit='ms')
+        data.set_index('Date', inplace=True)
+        return data
+    except Exception as e:
+        return None
+
+# --- BARRA LATERALE (CONTROLLI) ---
+st.sidebar.header("Pannello di Controllo")
+auto_refresh = st.sidebar.toggle("🔴 Aggiornamento Automatico (30s)", value=False)
+manual_refresh = st.sidebar.button("🔄 Aggiorna Adesso")
+
+# Contenitore vuoto che verrà riempito dai dati
+placeholder = st.empty()
+
+def scansione_mercato():
+    with placeholder.container():
+        now_utc = datetime.now(timezone.utc)
+        current_hour = now_utc.hour
+        
+        st.info(f"🕒 Orario UTC: {now_utc.strftime('%H:%M:%S')} (Candela delle {current_hour}:00)")
+        
+        # Creiamo 3 colonne per visualizzare le 3 crypto affiancate
+        cols = st.columns(3)
+        
+        for i, (ticker, params) in enumerate(strategies.items()):
+            col = cols[i]
+            
+            # 1. Scarico Dati da Binance
+            data = get_binance_data(ticker)
+            
+            if data is not None:
+                # 2. Calcolo Indicatori
+                sma_val = params['sma']
+                data['SMA'] = data['Close'].rolling(window=sma_val).mean()
                 
-            # 2. Indicatori
-            sma_val = params['sma']
-            data['SMA'] = data['Close'].rolling(window=sma_val).mean()
-            
-            last_candle = data.iloc[-1]
-            last_price = last_candle['Close']
-            last_sma = last_candle['SMA']
-            
-            # 3. Logica
-            trend_ok = last_price > last_sma
-            hour_ok = (current_hour == params['target_hour'])
-            
-            # 4. Determinazione Colore e Segnale
-            diff_percent = ((last_price - last_sma) / last_sma) * 100
-            
-            st.subheader(f"🪙 {ticker}")
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Prezzo", f"${last_price:.4f}")
-            col2.metric(f"SMA {sma_val}", f"${last_sma:.4f}", f"{diff_percent:.2f}%")
-            
-            if hour_ok:
-                if trend_ok:
-                    st.success(f"🚀 BUY NOW!(Zaxod v Long) (Stop Loss: -{params['sl']})")
+                # Ultima candela CHIUSA (per la media) e prezzo ATTUALE (real-time)
+                # Nota: .iloc[-1] è la candela corrente (ancora aperta), .iloc[-2] è l'ultima chiusa
+                last_price = data.iloc[-1]['Close'] 
+                last_sma = data.iloc[-1]['SMA']
+                
+                # 3. Logica Trading
+                trend_ok = last_price > last_sma
+                hour_ok = (current_hour == params['target_hour'])
+                
+                # Calcolo distanza percentuale dalla media
+                if last_sma > 0:
+                    diff_percent = ((last_price - last_sma) / last_sma) * 100
                 else:
-                    st.warning("⛔ FLAT (SraKa)")
-            else:
-                hours_left = params['target_hour'] - current_hour
-                if hours_left < 0: hours_left += 24
-                st.info(f"⏳ ATTENDI (Mancano {hours_left}h)")
+                    diff_percent = 0
                 
-            st.divider()
-            
-        except Exception as e:
-            st.error(f"Errore su {ticker}: {e}")
-            
-    progress_bar.empty()
-    st.caption("Nota: I segnali sono validi solo alla chiusura della candela oraria delle 17:00 UTC.")
+                # Visualizzazione nella colonna
+                with col:
+                    # Nome pulito (togliamo /USDT per estetica)
+                    clean_name = ticker.replace("/USDT", "")
+                    st.subheader(f"{clean_name}")
+                    
+                    # Colore dinamico del prezzo (Verde se sopra media, Rosso se sotto)
+                    st.metric(
+                        label="Prezzo Attuale",
+                        value=f"${last_price:.4f}",
+                        delta=f"{diff_percent:.2f}% vs SMA"
+                    )
+                    
+                    st.write(f"SMA {sma_val}: **${last_sma:.4f}**")
+                    
+                    if hour_ok:
+                        if trend_ok:
+                            st.success(f"🚀 **BUY NOW!**\nSL: -{params['sl']}")
+                        else:
+                            st.warning("⛔ **FLAT**\n(No Trend)")
+                    else:
+                        hours_left = params['target_hour'] - current_hour
+                        if hours_left < 0: hours_left += 24
+                        st.info(f"⏳ **ATTENDI**\n(-{hours_left}h)")
+            else:
+                col.error(f"Errore connessione Binance per {ticker}")
+
+# --- ESECUZIONE ---
+if auto_refresh:
+    scansione_mercato()
+    time.sleep(30) # Aggiorna ogni 30 secondi (più veloce di prima)
+    st.rerun()
+else:
+    scansione_mercato()
+
+st.sidebar.markdown("---")
+st.sidebar.caption("Dati forniti in tempo reale da Binance API (via ccxt).")
