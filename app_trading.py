@@ -6,15 +6,14 @@ import time
 from datetime import datetime, timezone
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="Крипто Бот Smart Money", page_icon="💎")
+st.set_page_config(page_title="Крипто Бот Pro", page_icon="💎")
 
 st.title("💎 Крипто Сканер Pro (Smart Money)")
 st.write("Стратегія: Тренд + Час + Об'єм (Дані Coinbase)")
 
-# --- ПАРАМЕТРИ СТРАТЕГІЙ ---
-# Додали SUI і фільтр об'єму
+# --- ПАРАМЕТРИ СТРАТЕГІЙ (Оновлено для SUI!) ---
 strategies = {
-    "SUI-USD": {"sma": 50,  "target_hour": 17, "sl": "2%"},
+    "SUI-USD": {"sma": 100, "target_hour": 8,  "sl": "2%"}, # <-- NUOVI PARAMETRI SUI
     "SOL-USD": {"sma": 100, "target_hour": 17, "sl": "2%"},
     "ETH-USD": {"sma": 50,  "target_hour": 17, "sl": "2%"},
     "XRP-USD": {"sma": 100, "target_hour": 17, "sl": "2%"}
@@ -56,48 +55,47 @@ def scansione_mercato():
         
         st.info(f"🕒 Час UTC: {now_utc.strftime('%H:%M:%S')} (Свічка H{current_hour})")
         
-        # Створюємо 4 колонки для 4 монет
+        # 4 колонкам (SUI, SOL, ETH, XRP)
         cols = st.columns(len(strategies))
         
         for i, (symbol, params) in enumerate(strategies.items()):
             col = cols[i]
             
-            # 1. Завантаження
             data = get_coinbase_data(symbol)
             
             if data is not None and not data.empty:
-                # 2. Індикатори Ціни
+                # Індикатори
                 sma_val = params['sma']
                 data['SMA'] = data['Close'].rolling(window=sma_val).mean()
-                
-                # 3. Індикатори Об'єму (SMART MONEY)
                 data['Vol_SMA'] = data['Volume'].rolling(window=20).mean()
                 
-                # Беремо останню ЗАВЕРШЕНУ свічку (щоб аналізувати об'єм)
-                last_candle = data.iloc[-2] # -1 це поточна (незавершена), -2 це остання закрита
-                current_price = data.iloc[-1]['Close'] # Поточна ціна в реальному часі
+                # Останні дані
+                last_candle = data.iloc[-2] # Остання закрита свічка
+                current_price = data.iloc[-1]['Close']
                 
                 price_sma = last_candle['SMA']
                 last_vol = last_candle['Volume']
                 vol_sma = last_candle['Vol_SMA']
                 
-                # 4. Логіка Сигналу
+                # Логіка Сигналу
                 trend_ok = current_price > price_sma
-                volume_ok = last_vol > vol_sma # Фільтр Об'єму!
+                volume_ok = last_vol > vol_sma
                 hour_ok = (current_hour == params['target_hour'])
                 
-                # Розрахунок зміни
                 diff_percent = ((current_price - price_sma) / price_sma) * 100
                 vol_change = ((last_vol - vol_sma) / vol_sma) * 100
                 
-                # 5. Візуалізація
+                # Візуалізація
                 with col:
                     clean_name = symbol.replace("-USD", "")
                     st.subheader(f"{clean_name}")
                     
                     st.metric("Ціна", f"${current_price:.4f}", f"{diff_percent:.2f}% SMA")
                     
-                    # Індикатор Об'єму
+                    # Цільовий час
+                    target_h = params['target_hour']
+                    st.caption(f"Час входу: {target_h}:00 UTC")
+                    
                     vol_icon = "🔥" if volume_ok else "❄️"
                     st.write(f"Об'єм: {vol_icon} ({vol_change:+.0f}%)")
                     
