@@ -6,14 +6,15 @@ import time
 from datetime import datetime, timezone
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="Крипто Бот Pro", page_icon="⚡")
+st.set_page_config(page_title="Крипто Бот Smart Money", page_icon="💎")
 
-st.title("⚡ Крипто Сканер (Дані Coinbase)")
-st.write("Дані в реальному часі через публічні API Coinbase")
+st.title("💎 Крипто Сканер Pro (Smart Money)")
+st.write("Стратегія: Тренд + Час + Об'єм (Дані Coinbase)")
 
 # --- ПАРАМЕТРИ СТРАТЕГІЙ ---
-# Символи Coinbase: "SOL-USD", "ETH-USD", "XRP-USD"
+# Додали SUI і фільтр об'єму
 strategies = {
+    "SUI-USD": {"sma": 50,  "target_hour": 17, "sl": "2%"},
     "SOL-USD": {"sma": 100, "target_hour": 17, "sl": "2%"},
     "ETH-USD": {"sma": 50,  "target_hour": 17, "sl": "2%"},
     "XRP-USD": {"sma": 100, "target_hour": 17, "sl": "2%"}
@@ -21,46 +22,30 @@ strategies = {
 
 # --- ФУНКЦІЯ ОТРИМАННЯ ДАНИХ (COINBASE) ---
 def get_coinbase_data(symbol, granularity=3600):
-    # Granularity 3600 = 1 година (в секундах)
     url = f"https://api.exchange.coinbase.com/products/{symbol}/candles"
     params = {"granularity": granularity}
-    
     try:
-        # Headers необхідні для імітації браузера
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json"
-        }
-        
+        headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
         response = requests.get(url, params=params, headers=headers, timeout=10)
-        
-        # Якщо є помилка, зупиняємо і показуємо повідомлення
         if response.status_code != 200:
-            st.error(f"Помилка API Coinbase ({response.status_code}): {response.text}")
+            st.error(f"Помилка API ({response.status_code})")
             return None
-            
+        
         data = response.json()
-        
-        # Coinbase повертає: [time, low, high, open, close, volume]
         df = pd.DataFrame(data, columns=['timestamp', 'Low', 'High', 'Open', 'Close', 'Volume'])
-        
-        # Конвертуємо часову мітку
         df['Date'] = pd.to_datetime(df['timestamp'], unit='s')
         df.set_index('Date', inplace=True)
-        
-        # Сортуємо від старого до нового
         df = df.sort_index()
-        
         return df
-        
     except Exception as e:
-        st.error(f"Виняток при з'єднанні {symbol}: {e}")
+        st.error(f"Помилка: {e}")
         return None
 
 # --- ПАНЕЛЬ КЕРУВАННЯ ---
-st.sidebar.header("Панель Керування")
-auto_refresh = st.sidebar.toggle("🔴 Live Режим (30с)", value=False)
-manual_refresh = st.sidebar.button("🔄 Оновити Дані")
+st.sidebar.header("Меню")
+auto_refresh = st.sidebar.toggle("🔴 Авто-оновлення (30с)", value=False)
+if st.sidebar.button("🔄 Оновити зараз"):
+    st.rerun()
 
 placeholder = st.empty()
 
@@ -71,57 +56,67 @@ def scansione_mercato():
         
         st.info(f"🕒 Час UTC: {now_utc.strftime('%H:%M:%S')} (Свічка H{current_hour})")
         
-        cols = st.columns(3)
+        # Створюємо 4 колонки для 4 монет
+        cols = st.columns(len(strategies))
         
         for i, (symbol, params) in enumerate(strategies.items()):
             col = cols[i]
             
-            # Завантаження Даних
+            # 1. Завантаження
             data = get_coinbase_data(symbol)
             
             if data is not None and not data.empty:
-                # Розрахунки
+                # 2. Індикатори Ціни
                 sma_val = params['sma']
                 data['SMA'] = data['Close'].rolling(window=sma_val).mean()
                 
-                last_price = data.iloc[-1]['Close']
-                last_sma = data.iloc[-1]['SMA']
+                # 3. Індикатори Об'єму (SMART MONEY)
+                data['Vol_SMA'] = data['Volume'].rolling(window=20).mean()
                 
-                # Логіка
-                trend_ok = last_price > last_sma
+                # Беремо останню ЗАВЕРШЕНУ свічку (щоб аналізувати об'єм)
+                last_candle = data.iloc[-2] # -1 це поточна (незавершена), -2 це остання закрита
+                current_price = data.iloc[-1]['Close'] # Поточна ціна в реальному часі
+                
+                price_sma = last_candle['SMA']
+                last_vol = last_candle['Volume']
+                vol_sma = last_candle['Vol_SMA']
+                
+                # 4. Логіка Сигналу
+                trend_ok = current_price > price_sma
+                volume_ok = last_vol > vol_sma # Фільтр Об'єму!
                 hour_ok = (current_hour == params['target_hour'])
                 
-                if last_sma > 0:
-                    diff_percent = ((last_price - last_sma) / last_sma) * 100
-                else:
-                    diff_percent = 0
+                # Розрахунок зміни
+                diff_percent = ((current_price - price_sma) / price_sma) * 100
+                vol_change = ((last_vol - vol_sma) / vol_sma) * 100
                 
-                # Візуалізація
+                # 5. Візуалізація
                 with col:
                     clean_name = symbol.replace("-USD", "")
                     st.subheader(f"{clean_name}")
                     
-                    st.metric(
-                        label="Ціна",
-                        value=f"${last_price:.4f}",
-                        delta=f"{diff_percent:.2f}% до SMA"
-                    )
+                    st.metric("Ціна", f"${current_price:.4f}", f"{diff_percent:.2f}% SMA")
                     
-                    st.caption(f"SMA {sma_val}: ${last_sma:.4f}")
+                    # Індикатор Об'єму
+                    vol_icon = "🔥" if volume_ok else "❄️"
+                    st.write(f"Об'єм: {vol_icon} ({vol_change:+.0f}%)")
                     
                     if hour_ok:
-                        if trend_ok:
-                            st.success(f"🚀 **КУПУВАТИ!**\nSL (Стоп): -{params['sl']}")
+                        if trend_ok and volume_ok:
+                            st.success(f"🚀 **КУПУВАТИ!**\n(Smart Money)")
+                            st.caption(f"SL: -{params['sl']}")
+                        elif trend_ok and not volume_ok:
+                            st.warning("⚠️ **ОБЕРЕЖНО**\n(Слабкий об'єм)")
                         else:
-                            st.warning("⛔ **ФЛЕТ**\n(Немає тренду)")
+                            st.error("⛔ **ФЛЕТ**")
                     else:
                         hours_left = params['target_hour'] - current_hour
                         if hours_left < 0: hours_left += 24
-                        st.info(f"⏳ **ЧЕКАЙТЕ** (-{hours_left}год)")
+                        st.info(f"⏳ **ЧЕКАЙТЕ**\n(-{hours_left}год)")
             else:
-                col.warning(f"Дані недоступні для {symbol}")
+                col.warning("No Data")
 
-# --- ЦИКЛ ВИКОНАННЯ ---
+# --- ЦИКЛ ---
 if auto_refresh:
     scansione_mercato()
     time.sleep(30)
@@ -130,4 +125,4 @@ else:
     scansione_mercato()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Дані в реальному часі надані Coinbase Public API.")
+st.sidebar.caption("Стратегія: Вхід тільки якщо Об'єм > Середнього.")
